@@ -30,7 +30,4 @@ for code, cur in rates.items():
     print(f"{cur.Name}: {cur.rate_per_unit():.4f} ₽")
     print(f"{cur.Name} * 70 = {cur.convert(70):.2f} ₽")
 
-Currency(CharCode="USD", Nominal="10", Name="Доллар", Value=80)
-
-
 
