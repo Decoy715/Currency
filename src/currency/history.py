@@ -20,7 +20,7 @@ async def fetch_usd(client: httpx.AsyncClient, day: datetime.date) -> float | No
 
 async def main():
     today = datetime.date.today()
-    days = [today - datetime.timedelta(days=i) for i in range(7)]
+    days = [today - datetime.timedelta(days=i) for i in range(30)]
 
     async with httpx.AsyncClient() as client:
         tasks = [fetch_usd(client, day) for day in days]            # задача fetch_usd для каждого дня
