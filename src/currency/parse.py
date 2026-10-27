@@ -8,7 +8,7 @@ from gigachat import GigaChat
 from gigachat.models import Chat, Messages, MessagesRole
 from pydantic import BaseModel, Field
 
-from main import get_rates
+from main import Currency, get_rates
 
 # Читаем .env и кладём переменные из него в os.environ
 load_dotenv()
@@ -48,6 +48,15 @@ class ConvertRequest(BaseModel):
     )
 
 
+# Результат для пользователя: все поля Item + причина отказа.
+# Отдельная модель, чтобы reason не попал в схему для LLM
+class ItemResult(Item):
+    reason: str | None = Field(
+        default=None,
+        description="None — конвертация принята, иначе причина отказа",
+    )
+
+
 # Тексты для пользователя пишет код, а не модель
 MESSAGES = {
     "not_currency": "Вопрос не связан с конвертацией валют",
@@ -67,6 +76,8 @@ SYSTEM_PROMPT = (
     "Примеры:\n"
     'Сообщение: Переведи 20 фунтов\n'
     'Ответ: {"items": [{"code": "GBP", "amount": 20, "target": "RUB"}]}\n'
+    'Сообщение: Сколько будет 10 тугриков\n'
+    'Ответ: {"items": [{"code": "MNT", "amount": 10, "target": "RUB"}]}\n'
     'Сообщение: Сколько долларов за 3000 рублей?\n'
     'Ответ: {"items": [{"code": "RUB", "amount": 3000, "target": "USD"}]}\n'
     'Сообщение: Посоветуй фильм\n'
@@ -76,7 +87,22 @@ SYSTEM_PROMPT = (
 )
 
 
-def parse_request(text: str) -> ConvertRequest:
+def check_item(item: Item, rates: dict[str, Currency]) -> ItemResult:
+    """Поштучная проверка одной конвертации."""
+    # Бизнес-правило проверяет код, а не модель.
+    # Идёт первым, иначе RUB из "рубли в евро" получил бы причину про ЦБ
+    if item.target != "RUB":
+        return ItemResult(**item.model_dump(), reason=MESSAGES["not_to_rub"])
+    # Валюта должна быть у ЦБ: проверяем по живым данным
+    if item.code not in rates:
+        return ItemResult(
+            **item.model_dump(),
+            reason=MESSAGES["unknown_currency"].format(item.code),
+        )
+    return ItemResult(**item.model_dump())
+
+
+def parse_request(text: str) -> list[ItemResult]:
     payload = Chat(
         messages=[
             Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT),
@@ -101,27 +127,16 @@ def parse_request(text: str) -> ConvertRequest:
     # Модель сломалась (не JSON, чужой код ошибки) -> ValidationError
     result = ConvertRequest.model_validate_json(content)
 
-    # Модель решила, что запрос не про валюты -> ValueError
+    # Проверки уровня запроса: разбирать нечего -> ValueError
     if result.error:
         raise ValueError(MESSAGES[result.error])
-
-    # Бизнес-правило проверяет код, а не модель
-    if any(item.target != "RUB" for item in result.items):
-        raise ValueError(MESSAGES["not_to_rub"])
-
     # Пустой список без ошибки: модель не нашла валюты и не сказала почему
     if not result.items:
         raise ValueError(MESSAGES["not_currency"])
 
-    # Валюта должна быть у ЦБ: проверяем по живым данным.
-    # Идёт после проверки target, иначе RUB из "рубли в евро" попал бы сюда
-    codes = [item.code for item in result.items]
-    rates = get_rates(codes)
-    missing = [code for code in codes if code not in rates]
-    if missing:
-        raise ValueError(MESSAGES["unknown_currency"].format(", ".join(missing)))
-
-    return result
+    # Проверки уровня элемента: каждый Item отдельно, без raise
+    rates = get_rates([item.code for item in result.items])
+    return [check_item(item, rates) for item in result.items]
 
 
 if __name__ == "__main__":
@@ -133,10 +148,13 @@ if __name__ == "__main__":
         "Переведи 100 долларов в рубли и 200 рублей в евро",
         "Переведи 100 тугриков",
         "Переведи 2 биткоина",
+        "Переведи 100 долларов и 2 биткоина",
     ]
     for phrase in phrases:
         print(">>", phrase)
         try:
-            print(parse_request(phrase))
+            for item in parse_request(phrase):
+                status = "OK" if item.reason is None else f"отказ: {item.reason}"
+                print(f"   {item.amount} {item.code} -> {item.target}: {status}")
         except ValueError as e:
             print("Отказ:", e)
