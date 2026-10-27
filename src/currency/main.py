@@ -21,13 +21,13 @@ def get_rates(codes: list[str]) -> dict[str, Currency]:
     for code in codes:
         if code in valute_info:
             result[code] = Currency(**valute_info[code])    # объект Currency из valute_info[code]
-        else:
-            print(f"Валюта {code} не найдена")
     return result
 
-rates = get_rates(["USD", "EUR", "CNY", "XYZ"])
-for code, cur in rates.items():
-    print(f"{cur.Name}: {cur.rate_per_unit():.4f} ₽")
-    print(f"{cur.Name} * 70 = {cur.convert(70):.2f} ₽")
+# Выполняется только при запуске файла, а не при импорте из parse.py
+if __name__ == "__main__":
+    rates = get_rates(["USD", "EUR", "CNY", "XYZ"])
+    for code, cur in rates.items():
+        print(f"{cur.Name}: {cur.rate_per_unit():.4f} ₽")
+        print(f"{cur.Name} * 70 = {cur.convert(70):.2f} ₽")
 
 
